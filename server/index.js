@@ -7,13 +7,15 @@ import { ethers } from 'ethers';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import jwt from 'jsonwebtoken';
 
-import { supabaseAdmin } from './supabaseClient.js';
+import db from './db.js';
 import authRouter from './auth.js';
 
 dotenv.config();
 
 // --- Pinata IPFS Upload ---
+// (omitted for brevity in replacement preview)
 async function uploadToIPFS(fileBuffer, fileName, mimeType) {
     const url = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
     const formData = new FormData();
@@ -39,7 +41,7 @@ async function uploadToIPFS(fileBuffer, fileName, mimeType) {
 
     const data = await res.json();
     console.log(`📦 IPFS Upload OK! CID: ${data.IpfsHash}`);
-    return data.IpfsHash;
+    return data.IpfsHash; // This is the CID
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -47,21 +49,18 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'geocorp-super-secret-key-123';
 
-// --- Auth Middleware (Supabase JWT) ---
-const requireAuth = async (req, res, next) => {
+// --- Auth Middleware ---
+const requireAuth = (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized: No token provided' });
     }
     const token = authHeader.split(' ')[1];
     try {
-        // Verify Supabase JWT
-        const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-        if (error || !user) {
-            return res.status(401).json({ error: 'Unauthorized: Invalid token' });
-        }
-        req.user = { id: user.id, email: user.email };
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
         next();
     } catch (err) {
         return res.status(401).json({ error: 'Unauthorized: Invalid token' });
@@ -102,237 +101,54 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json());
 
-// ── Health Check for Railway ──
-app.get('/api/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
-
 app.use('/api/auth', authRouter);
 
-// ── Helper: compute & credit passive yield since last check ──
-async function creditPassiveYield(userId) {
-    const { data: profile } = await supabaseAdmin
-        .from('profiles')
-        .select('geo_balance, last_yield_calc')
-        .eq('id', userId)
-        .single();
-
-    if (!profile) return 0;
-
-    const { data: businesses } = await supabaseAdmin
-        .from('businesses')
-        .select('yield_rate')
-        .eq('user_id', userId);
-
-    const dailyYield = (businesses || []).reduce((sum, b) => sum + b.yield_rate, 0);
-    if (dailyYield === 0) return profile.geo_balance || 0;
-
-    const lastCalc = profile.last_yield_calc ? new Date(profile.last_yield_calc).getTime() : Date.now();
-    const now = Date.now();
-    const elapsedMs = Math.max(0, now - lastCalc);
-    const elapsedDays = elapsedMs / (24 * 60 * 60 * 1000);
-    const earned = dailyYield * elapsedDays;
-
-    if (earned > 0.001) {
-        const newBalance = (profile.geo_balance || 0) + earned;
-        await supabaseAdmin
-            .from('profiles')
-            .update({ geo_balance: newBalance, last_yield_calc: new Date().toISOString() })
-            .eq('id', userId);
-
-        // Log a yield transaction if >= 0.01 GEO
-        if (earned >= 0.01) {
-            await supabaseAdmin.from('transactions').insert({
-                user_id: userId,
-                type: 'yield',
-                amount: parseFloat(earned.toFixed(2)),
-                description: `Passive yield (${(businesses || []).length} properties)`,
-            });
-        }
-        return newBalance;
-    }
-    return profile.geo_balance || 0;
-}
-
-// ── GET /api/me ──
-app.get('/api/me', requireAuth, async (req, res) => {
+// Database Profile Info
+app.get('/api/me', requireAuth, (req, res) => {
     try {
-        // Credit passive yield first
-        await creditPassiveYield(req.user.id);
+        const user = db.prepare('SELECT id, email, username, energy, evm_address, evm_private_key FROM users WHERE id = ?').get(req.user.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
-        const { data: profile, error } = await supabaseAdmin
-            .from('profiles')
-            .select('*')
-            .eq('id', req.user.id)
-            .single();
+        const businesses = db.prepare('SELECT * FROM businesses WHERE user_id = ?').all(user.id);
 
-        if (error || !profile) return res.status(404).json({ error: 'User not found' });
-
-        const { data: businesses } = await supabaseAdmin
-            .from('businesses')
-            .select('*')
-            .eq('user_id', req.user.id);
-
-        const totalYield = (businesses || []).reduce((sum, b) => sum + b.yield_rate, 0);
+        const totalYield = businesses.reduce((sum, b) => sum + b.yield_rate, 0);
 
         res.json({
             user: {
-                id: profile.id,
-                email: profile.email,
-                username: profile.username,
-                energy: profile.energy,
-                evm_address: profile.evm_address,
-                evm_private_key: profile.evm_private_key,
-                balance: parseFloat((profile.geo_balance || 0).toFixed(2))
+                id: user.id,
+                email: user.email,
+                username: user.username,
+                energy: user.energy,
+                evm_address: user.evm_address,
+                evm_private_key: user.evm_private_key, // Passed purely for hackathon MVP view
+                balance: totalYield * 10 // Arbitrary total balance simulation
             },
-            businesses: businesses || [],
+            businesses: businesses,
             metrics: {
-                dailyYield: parseFloat(totalYield.toFixed(2)),
-                propertiesOwned: (businesses || []).length
+                dailyYield: totalYield,
+                propertiesOwned: businesses.length
             }
         });
     } catch (error) {
-        console.error('GET /api/me error:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// ── POST /api/capture ──
-app.post('/api/capture', requireAuth, async (req, res) => {
+// Database Leaderboard
+app.get('/api/leaderboard', (req, res) => {
     try {
-        const { lat, lng, name, category, reward, txHash, ipfsCid } = req.body;
-        if (!lat || !lng || !name) return res.status(400).json({ error: 'Missing required fields (lat, lng, name)' });
+        const users = db.prepare(`
+            SELECT u.id, u.username, u.evm_address,
+                   COALESCE(SUM(b.yield_rate), 0) as daily_yield,
+                   COUNT(b.id) as properties_owned
+            FROM users u
+            LEFT JOIN businesses b ON u.id = b.user_id
+            GROUP BY u.id
+            ORDER BY daily_yield DESC, properties_owned DESC
+        `).all();
 
-        const yieldRate = Math.round((reward || 20) * 0.1 * 100) / 100;
-        const mintReward = reward || 20;
-
-        // Insert business (conflict = do nothing for duplicates)
-        const { data: biz, error: insertErr } = await supabaseAdmin
-            .from('businesses')
-            .insert({
-                user_id: req.user.id,
-                lat,
-                lng,
-                name,
-                category: category || 'Business',
-                yield_rate: yieldRate,
-                image_cid: ipfsCid || null,
-            })
-            .select()
-            .single();
-
-        if (insertErr) {
-            if (insertErr.code === '23505') { // UNIQUE violation
-                return res.status(409).json({ error: 'Business already captured at this location' });
-            }
-            throw insertErr;
-        }
-
-        // Credit mint reward to balance
-        const { data: profile } = await supabaseAdmin
-            .from('profiles')
-            .select('geo_balance')
-            .eq('id', req.user.id)
-            .single();
-
-        const newBalance = (profile?.geo_balance || 0) + mintReward;
-
-        await supabaseAdmin
-            .from('profiles')
-            .update({ geo_balance: newBalance, last_yield_calc: new Date().toISOString() })
-            .eq('id', req.user.id);
-
-        // Log mint transaction
-        await supabaseAdmin.from('transactions').insert({
-            user_id: req.user.id,
-            type: 'mint',
-            amount: mintReward,
-            description: `Captured ${name}`,
-            business_name: name,
-        });
-
-        res.json({
-            success: true,
-            businessId: biz.id,
-            reward: mintReward,
-            dailyYield: yieldRate,
-            newBalance: parseFloat(newBalance.toFixed(2))
-        });
+        res.json(users);
     } catch (error) {
-        console.error('POST /api/capture error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ── GET /api/transactions ──
-app.get('/api/transactions', requireAuth, async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 20;
-        const { data: txs, error } = await supabaseAdmin
-            .from('transactions')
-            .select('id, type, amount, description, business_name, created_at')
-            .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false })
-            .limit(limit);
-
-        if (error) throw error;
-        res.json(txs || []);
-    } catch (error) {
-        console.error('GET /api/transactions error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ── GET /api/leaderboard ──
-app.get('/api/leaderboard', async (req, res) => {
-    try {
-        // Step 1: Fetch ALL profiles to accurately calculate real-time standings
-        const { data: profiles, error } = await supabaseAdmin
-            .from('profiles')
-            .select('id, username, evm_address, geo_balance, last_yield_calc');
-
-        if (error) throw error;
-
-        // Step 2: Fetch ALL businesses to map yields locally (Only 1 query instead of 50!)
-        const { data: allBusinesses } = await supabaseAdmin
-            .from('businesses')
-            .select('user_id, yield_rate');
-
-        const userBizMap = {};
-        for (const b of (allBusinesses || [])) {
-            if (!userBizMap[b.user_id]) userBizMap[b.user_id] = [];
-            userBizMap[b.user_id].push(b);
-        }
-
-        // Step 3: Compute exact real-time yields down to the millisecond
-        const results = [];
-        const now = Date.now();
-
-        for (const p of (profiles || [])) {
-            const userBiz = userBizMap[p.id] || [];
-            const dailyYield = userBiz.reduce((sum, b) => sum + b.yield_rate, 0);
-            const count = userBiz.length;
-
-            const lastCalc = p.last_yield_calc ? new Date(p.last_yield_calc).getTime() : now;
-            const elapsedDays = Math.max(0, now - lastCalc) / (24 * 60 * 60 * 1000);
-            const earned = dailyYield * elapsedDays;
-            
-            const realTimeBalance = (p.geo_balance || 0) + earned;
-
-            results.push({
-                id: p.id,
-                username: p.username,
-                evm_address: p.evm_address,
-                geo_balance: parseFloat(realTimeBalance.toFixed(2)),
-                daily_yield: parseFloat(dailyYield.toFixed(2)),
-                properties_owned: count || 0,
-            });
-        }
-
-        // Step 4: Sort by true live balance and slice top 50
-        results.sort((a, b) => b.geo_balance - a.geo_balance);
-
-        res.json(results.slice(0, 50));
-    } catch (error) {
-        console.error('GET /api/leaderboard error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -342,7 +158,6 @@ app.get('/api/health', (req, res) => {
     res.json({
         status: 'ok',
         message: 'GeoCorp backend is running!',
-        database: 'Supabase PostgreSQL',
         blockchain: contract ? `Connected to ${CONTRACT_ADDRESS}` : 'Not connected',
         ipfs: process.env.PINATA_JWT ? 'Pinata connected' : 'Not configured',
     });
@@ -359,6 +174,7 @@ app.post('/api/validate', upload.single('photo'), async (req, res) => {
         const base64Image = req.file.buffer.toString('base64');
         const dataUrl = `data:${mimeType};base64,${base64Image}`;
 
+        // Extract metadata from the request body
         const explorerAddress = req.body.explorerAddress || "0x0000000000000000000000000000000000000001";
         const lat = req.body.lat ? Math.round(parseFloat(req.body.lat) * 1e6) : 0;
         const lng = req.body.lng ? Math.round(parseFloat(req.body.lng) * 1e6) : 0;
@@ -366,14 +182,15 @@ app.post('/api/validate', upload.single('photo'), async (req, res) => {
 
         const businessName = req.body.businessName || '';
         const businessCategory = req.body.businessCategory || '';
-        const SERPER_API_KEY = '77325499bfa537f9629fa30069b94ecb5e3d98ca';
+        const SERPER_API_KEY = process.env.SERPER_API_KEY || '';
 
         console.log(`\n🔍 Analyzing image for mission: "${businessName}" (${businessCategory})...`);
 
         // ── Step 1: Fetch reference image from Google Images via Serper ──
         let referenceImageUrl = null;
-        let referenceDataUrl = null;
+        let referenceDataUrl = null; // base64-encoded version for reliable AI delivery
 
+        // Get city name via Reverse Geocoding to improve Google Image search accuracy
         let cityName = "";
         try {
             if (req.body.lat && req.body.lng) {
@@ -403,13 +220,17 @@ app.post('/api/validate', upload.single('photo'), async (req, res) => {
                     'X-API-KEY': SERPER_API_KEY,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ q: serperQuery, num: 5 }),
+                body: JSON.stringify({
+                    q: serperQuery,
+                    num: 5,
+                }),
             });
 
             if (serperRes.ok) {
                 const serperData = await serperRes.json();
                 const images = serperData.images || [];
 
+                // Try to download each image result until one succeeds
                 for (const img of images) {
                     try {
                         const imgRes = await fetch(img.imageUrl, {
@@ -422,7 +243,7 @@ app.post('/api/validate', upload.single('photo'), async (req, res) => {
                         if (!contentType.startsWith('image/')) continue;
 
                         const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
-                        if (imgBuffer.length < 1000) continue;
+                        if (imgBuffer.length < 1000) continue; // Skip tiny/broken images
 
                         referenceDataUrl = `data:${contentType};base64,${imgBuffer.toString('base64')}`;
                         referenceImageUrl = img.imageUrl;
@@ -443,11 +264,12 @@ app.post('/api/validate', upload.single('photo'), async (req, res) => {
             console.log('⚠️  Serper fetch failed:', serperErr.message, '— falling back to single-image mode.');
         }
 
-        // ── Step 2: Build the AI prompt ──
+        // ── Step 2: Build the AI prompt (dual-image or single-image) ──
         let promptText;
         let messageContent;
 
         if (referenceDataUrl) {
+            // ★ DUAL-IMAGE MODE: Compare user photo vs Google reference
             promptText = `You are an AI Oracle for GeoCorp, a Web3 location verification game.
 
 You are given TWO images:
@@ -478,6 +300,7 @@ Examples:
             ];
             console.log('🔀 Mode: DUAL-IMAGE comparison (User Photo + Google Reference)');
         } else {
+            // Fallback: single image mode
             promptText = `You are an AI for a verification game. The user is attempting to verify a location named "${businessName}" (Category: ${businessCategory}).
 
 CRITICAL INSTRUCTION FOR THIS TEST: 
@@ -500,8 +323,13 @@ If the image shows a completely DIFFERENT business or building (e.g. McDonald's 
 
         // ── Step 3: Call GPT-4o-mini Vision ──
         const response = await openai.chat.completions.create({
-            model: "google/gemini-2.5-flash",
-            messages: [{ role: "user", content: messageContent }],
+            model: "openai/gpt-4o-mini",
+            messages: [
+                {
+                    role: "user",
+                    content: messageContent,
+                }
+            ],
             max_tokens: 30,
         });
 
@@ -510,8 +338,9 @@ If the image shows a completely DIFFERENT business or building (e.g. McDonald's 
 
         const isApproved = aiAnswer.includes('YES');
 
+        // Parse building type from AI response (e.g., "YES|CAFE")
         const buildingTypeMap = { CAFE: 0, RESTAURANT: 1, SHOP: 2, OFFICE: 3, GAS: 4, PARK: 5, HOTEL: 6, MALL: 7, GYM: 8, OTHER: 9 };
-        let buildingType = 9;
+        let buildingType = 9; // Default: Other
         if (isApproved && aiAnswer.includes('|')) {
             const typePart = aiAnswer.split('|')[1]?.trim();
             if (typePart && buildingTypeMap[typePart] !== undefined) {
@@ -519,13 +348,14 @@ If the image shows a completely DIFFERENT business or building (e.g. McDonald's 
             }
         }
 
-        // --- Blockchain ---
+        // --- Blockchain: Record result on-chain ---
         let txHash = null;
         let flowscanUrl = null;
 
         if (contract) {
             try {
                 if (isApproved) {
+                    // Photo verified → upload to IPFS via Pinata, then mint NFT on-chain
                     let ipfsCid = 'upload-failed';
                     try {
                         const fileName = `building_${Date.now()}.jpg`;
@@ -540,6 +370,7 @@ If the image shows a completely DIFFERENT business or building (e.g. McDonald's 
                     flowscanUrl = `https://evm-testnet.flowscan.io/tx/${txHash}`;
                     console.log(`✅ Property NFT minted! TX: ${flowscanUrl}`);
                 } else {
+                    // Photo rejected → issue strike on-chain
                     console.log(`⛓️  Calling issueStrike(${explorerAddress})...`);
                     const tx = await contract.issueStrike(explorerAddress);
                     const receipt = await tx.wait();
@@ -658,25 +489,8 @@ app.get('/api/marketplace', async (req, res) => {
     }
 });
 
-// ── Serve Vite Frontend Build (Production) ──
-import { existsSync } from 'fs';
-const distPath = join(__dirname, '..', 'dist');
-if (existsSync(distPath)) {
-    app.use(express.static(distPath));
-    // All non-API routes → serve index.html (SPA routing)
-    app.use((req, res, next) => {
-        if (req.method === 'GET' && !req.path.startsWith('/api')) {
-            res.sendFile(join(distPath, 'index.html'));
-        } else {
-            next();
-        }
-    });
-    console.log('📁 Serving static frontend from /dist');
-}
-
 app.listen(port, () => {
     console.log(`\n🚀 GeoCorp Server running on port ${port}`);
-    console.log(`🗄️  Database: Supabase PostgreSQL`);
     console.log(`⛓️  Flow EVM Testnet | Contract: ${CONTRACT_ADDRESS}`);
     console.log(`📦 IPFS: Pinata ${process.env.PINATA_JWT ? '✅ Connected' : '❌ Not configured'}`);
     console.log(`🔗 Flowscan: https://evm-testnet.flowscan.io/address/${CONTRACT_ADDRESS}\n`);

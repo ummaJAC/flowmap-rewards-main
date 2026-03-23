@@ -664,8 +664,12 @@ const distPath = join(__dirname, '..', 'dist');
 if (existsSync(distPath)) {
     app.use(express.static(distPath));
     // All non-API routes → serve index.html (SPA routing)
-    app.get('*', (req, res) => {
-        res.sendFile(join(distPath, 'index.html'));
+    app.use((req, res, next) => {
+        if (req.method === 'GET' && !req.path.startsWith('/api')) {
+            res.sendFile(join(distPath, 'index.html'));
+        } else {
+            next();
+        }
     });
     console.log('📁 Serving static frontend from /dist');
 }

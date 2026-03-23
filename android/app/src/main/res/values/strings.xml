@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MobiFlow</string>
+    <string name="title_activity_main">MobiFlow</string>
+    <string name="package_name">com.mobiflow.app</string>
+    <string name="custom_url_scheme">com.mobiflow.app</string>
+</resources>

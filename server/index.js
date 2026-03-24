@@ -4,7 +4,7 @@ import multer from 'multer';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
 import { ethers } from 'ethers';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import jwt from 'jsonwebtoken';
@@ -581,6 +581,23 @@ app.get('/api/marketplace', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// --- Static Frontend Serving ---
+const distPath = join(__dirname, '..', 'dist');
+if (existsSync(distPath)) {
+    app.use(express.static(distPath));
+    // All non-API routes → serve index.html (SPA routing)
+    app.use((req, res, next) => {
+        if (req.method === 'GET' && !req.path.startsWith('/api')) {
+            res.sendFile(join(distPath, 'index.html'));
+        } else {
+            next();
+        }
+    });
+    console.log('📁 Serving static frontend from /dist');
+} else {
+    console.log('⚠️ /dist folder not found. Only API routes are active.');
+}
 
 app.listen(port, () => {
     console.log(`\n🚀 GeoCorp Server running on port ${port}`);

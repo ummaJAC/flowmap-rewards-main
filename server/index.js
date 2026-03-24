@@ -8,8 +8,8 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import jwt from 'jsonwebtoken';
+import { supabaseAdmin } from './supabaseClient.js';
 
-import db from './db.js';
 import authRouter from './auth.js';
 
 dotenv.config();
@@ -104,14 +104,24 @@ app.use(express.json());
 app.use('/api/auth', authRouter);
 
 // Database Profile Info
-app.get('/api/me', requireAuth, (req, res) => {
+app.get('/api/me', requireAuth, async (req, res) => {
     try {
-        const user = db.prepare('SELECT id, email, username, energy, evm_address, evm_private_key FROM users WHERE id = ?').get(req.user.id);
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        const userId = req.user.id;
+        
+        const { data: user, error: userErr } = await supabaseAdmin
+            .from('profiles')
+            .select('id, email, username, energy, evm_address, evm_private_key, geo_balance')
+            .eq('id', userId)
+            .single();
 
-        const businesses = db.prepare('SELECT * FROM businesses WHERE user_id = ?').all(user.id);
+        if (userErr || !user) return res.status(404).json({ error: 'User not found' });
 
-        const totalYield = businesses.reduce((sum, b) => sum + b.yield_rate, 0);
+        const { data: businesses, error: bizErr } = await supabaseAdmin
+            .from('businesses')
+            .select('*')
+            .eq('user_id', userId);
+
+        const totalYield = (businesses || []).reduce((sum, b) => sum + (b.yield_rate || 0), 0);
 
         res.json({
             user: {
@@ -121,12 +131,12 @@ app.get('/api/me', requireAuth, (req, res) => {
                 energy: user.energy,
                 evm_address: user.evm_address,
                 evm_private_key: user.evm_private_key, // Passed purely for hackathon MVP view
-                balance: totalYield * 10 // Arbitrary total balance simulation
+                balance: user.geo_balance
             },
-            businesses: businesses,
+            businesses: businesses || [],
             metrics: {
                 dailyYield: totalYield,
-                propertiesOwned: businesses.length
+                propertiesOwned: businesses?.length || 0
             }
         });
     } catch (error) {
@@ -135,21 +145,104 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 // Database Leaderboard
-app.get('/api/leaderboard', (req, res) => {
+app.get('/api/leaderboard', async (req, res) => {
     try {
-        const users = db.prepare(`
-            SELECT u.id, u.username, u.evm_address,
-                   COALESCE(SUM(b.yield_rate), 0) as daily_yield,
-                   COUNT(b.id) as properties_owned
-            FROM users u
-            LEFT JOIN businesses b ON u.id = b.user_id
-            GROUP BY u.id
-            ORDER BY daily_yield DESC, properties_owned DESC
-        `).all();
+        const { data, error } = await supabaseAdmin
+            .from('profiles')
+            .select('id, username, evm_address, geo_balance, energy, created_at')
+            .order('geo_balance', { ascending: false })
+            .limit(100);
+
+        if (error) throw error;
+        
+        // Map to expected frontend format (approximate yields for MVP leaderboard)
+        const users = data.map(u => ({
+            id: u.id,
+            username: u.username,
+            evm_address: u.evm_address,
+            daily_yield: Math.floor(u.geo_balance * 0.1), // Mocked for MVP
+            properties_owned: 0 // Mocked for MVP
+        }));
 
         res.json(users);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Persist business capture to database
+app.post('/api/capture', requireAuth, async (req, res) => {
+    try {
+        const { lat, lng, name, category, reward, txHash, ipfsCid } = req.body;
+        const userId = req.user.id;
+
+        // Verify user exists and get current balance
+        const { data: user, error: userErr } = await supabaseAdmin
+            .from('profiles')
+            .select('geo_balance')
+            .eq('id', userId)
+            .single();
+
+        if (userErr || !user) return res.status(404).json({ error: "User not found" });
+
+        // Insert business
+        const { data: newBiz, error: bizErr } = await supabaseAdmin
+            .from('businesses')
+            .insert({
+                user_id: userId,
+                lat,
+                lng,
+                name,
+                category,
+                yield_rate: Math.ceil(reward * 0.1),
+                tx_hash: txHash || null,
+                image_cid: ipfsCid || null
+            })
+            .select()
+            .single();
+
+        if (bizErr) throw bizErr;
+
+        const newBalance = user.geo_balance + reward;
+
+        // Update profile balance
+        const { error: updateErr } = await supabaseAdmin
+            .from('profiles')
+            .update({ geo_balance: newBalance })
+            .eq('id', userId);
+
+        if (updateErr) throw updateErr;
+
+        // Log transaction
+        await supabaseAdmin.from('transactions').insert({
+            user_id: userId,
+            type: 'mint',
+            amount: reward,
+            description: `Captured ${name}`,
+            business_name: name
+        });
+
+        res.json({ success: true, newBalance, business: newBiz });
+    } catch (err) {
+        console.error("Capture API Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fetch user transactions
+app.get('/api/transactions', requireAuth, async (req, res) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('transactions')
+            .select('*')
+            .eq('user_id', req.user.id)
+            .order('created_at', { ascending: false })
+            .limit(parseInt(req.query.limit) || 20);
+
+        if (error) throw error;
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

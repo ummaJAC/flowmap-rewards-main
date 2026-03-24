@@ -79,8 +79,12 @@ router.post('/verify-otp', async (req, res) => {
         if (profile) {
             // Existing user → login
             console.log(`✅ Login: ${profile.username} (${normalizedEmail})`);
+            
+            // Generate a long-lived custom JWT (30 days) to prevent 1-hour logouts
+            const customToken = jwt.sign({ id: profile.id, email: profile.email }, process.env.JWT_SECRET || 'geocorp-super-secret-key-123', { expiresIn: '30d' });
+
             return res.json({
-                token: session.access_token,
+                token: customToken,
                 user: {
                     id: profile.id,
                     email: profile.email,
@@ -125,8 +129,10 @@ router.post('/verify-otp', async (req, res) => {
 
         console.log(`🆕 New user registered: ${username} (${normalizedEmail}) → ${newWallet.address}`);
 
+        const customToken = jwt.sign({ id: newProfile.id, email: newProfile.email }, process.env.JWT_SECRET || 'geocorp-super-secret-key-123', { expiresIn: '30d' });
+
         res.json({
-            token: session.access_token,
+            token: customToken,
             user: {
                 id: newProfile.id,
                 email: newProfile.email,
@@ -206,8 +212,9 @@ router.post('/google', async (req, res) => {
             }).catch(() => ({ data: null }));
 
             console.log(`✅ Google Login: ${profile.username} (${email})`);
+            const customToken = jwt.sign({ id: profile.id, email: profile.email }, process.env.JWT_SECRET || 'geocorp-super-secret-key-123', { expiresIn: '30d' });
             return res.json({
-                token: supabaseUserId, // Use user ID as token, validated via Supabase on each request
+                token: customToken,
                 user: {
                     id: profile.id,
                     email: profile.email,
@@ -252,8 +259,10 @@ router.post('/google', async (req, res) => {
 
         console.log(`🆕 Google Register: ${username} (${email}) → ${newWallet.address}`);
 
+        const customToken = jwt.sign({ id: newProfile.id, email: newProfile.email }, process.env.JWT_SECRET || 'geocorp-super-secret-key-123', { expiresIn: '30d' });
+
         res.json({
-            token: supabaseUserId,
+            token: customToken,
             user: {
                 id: newProfile.id,
                 email: newProfile.email,

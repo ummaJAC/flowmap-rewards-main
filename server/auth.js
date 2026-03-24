@@ -1,6 +1,7 @@
 import express from 'express';
 import { ethers } from 'ethers';
 import { supabaseAdmin } from './supabaseClient.js';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 

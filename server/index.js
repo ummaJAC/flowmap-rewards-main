@@ -147,21 +147,36 @@ app.get('/api/me', requireAuth, async (req, res) => {
 // Database Leaderboard
 app.get('/api/leaderboard', async (req, res) => {
     try {
-        const { data, error } = await supabaseAdmin
+        const { data: profiles, error: profilesErr } = await supabaseAdmin
             .from('profiles')
             .select('id, username, evm_address, geo_balance, energy, created_at')
             .order('geo_balance', { ascending: false })
             .limit(100);
 
-        if (error) throw error;
-        
-        // Map to expected frontend format (approximate yields for MVP leaderboard)
-        const users = data.map(u => ({
+        if (profilesErr) throw profilesErr;
+
+        // Fetch property counts per user in one query
+        const userIds = profiles.map(u => u.id);
+        const { data: bizCounts, error: bizErr } = await supabaseAdmin
+            .from('businesses')
+            .select('user_id')
+            .in('user_id', userIds);
+
+        // Build a map: userId -> number of properties
+        const propertyMap = {};
+        if (!bizErr && bizCounts) {
+            for (const b of bizCounts) {
+                propertyMap[b.user_id] = (propertyMap[b.user_id] || 0) + 1;
+            }
+        }
+
+        const users = profiles.map(u => ({
             id: u.id,
             username: u.username,
             evm_address: u.evm_address,
-            daily_yield: Math.floor(u.geo_balance * 0.1), // Mocked for MVP
-            properties_owned: 0 // Mocked for MVP
+            geo_balance: u.geo_balance || 0,
+            daily_yield: Math.floor((u.geo_balance || 0) * 0.1),
+            properties_owned: propertyMap[u.id] || 0
         }));
 
         res.json(users);

@@ -4,6 +4,7 @@ import { Timer, Camera as CameraIcon, Check, Shield, X, RotateCcw } from "lucide
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { blurFaces, preloadFaceDetector } from "@/services/faceBlur";
+import useGameStore from "../store/useGameStore";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -27,6 +28,7 @@ const CameraScreen = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const business: BusinessData | null = location.state?.business || null;
+  const userAddress = useGameStore(s => s.user?.evm_address);
 
   // Camera state
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -266,7 +268,7 @@ const CameraScreen = () => {
       formData.append("reward", String(business?.reward || 25));
       formData.append("businessName", business?.name || "unknown");
       formData.append("businessCategory", business?.category || business?.label || "business");
-      formData.append("explorerAddress", "0x0000000000000000000000000000000000000001");
+      formData.append("explorerAddress", userAddress || "0x0000000000000000000000000000000000000001");
 
       const apiRes = await fetch("/api/validate", {
         method: "POST",

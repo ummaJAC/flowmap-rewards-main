@@ -48,67 +48,83 @@ async function getDetector(): Promise<FaceDetector> {
 export async function blurFaces(
   imageSource: string
 ): Promise<{ blurredBase64: string; facesDetected: number }> {
-  const fd = await getDetector();
+  // Timeout: if face detection takes >5s (slow network, GPU fail), skip blur
+  const TIMEOUT_MS = 5000;
 
-  // Load image into an HTMLImageElement
-  const img = await loadImage(imageSource);
+  const blurTask = async (): Promise<{ blurredBase64: string; facesDetected: number }> => {
+    const fd = await getDetector();
 
-  // Create an offscreen canvas matching the image size
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext("2d")!;
+    // Load image into an HTMLImageElement
+    const img = await loadImage(imageSource);
 
-  // Draw the original image
-  ctx.drawImage(img, 0, 0);
+    // Create an offscreen canvas matching the image size
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d")!;
 
-  // Detect faces
-  const result = fd.detect(img);
-  const detections = result.detections;
+    // Draw the original image
+    ctx.drawImage(img, 0, 0);
 
-  if (detections.length > 0) {
-    // For each detected face, apply pixelated blur
-    for (const detection of detections) {
-      const bbox = detection.boundingBox;
-      if (!bbox) continue;
+    // Detect faces
+    const result = fd.detect(img);
+    const detections = result.detections;
 
-      // Add 20% padding around the face for better coverage
-      const padX = bbox.width * 0.2;
-      const padY = bbox.height * 0.2;
-      const x = Math.max(0, bbox.originX - padX);
-      const y = Math.max(0, bbox.originY - padY);
-      const w = Math.min(canvas.width - x, bbox.width + padX * 2);
-      const h = Math.min(canvas.height - y, bbox.height + padY * 2);
+    if (detections.length > 0) {
+      // For each detected face, apply pixelated blur
+      for (const detection of detections) {
+        const bbox = detection.boundingBox;
+        if (!bbox) continue;
 
-      // Pixelate the face region (scale down, then scale back up)
-      const pixelSize = 12;
-      const tempCanvas = document.createElement("canvas");
-      tempCanvas.width = w;
-      tempCanvas.height = h;
-      const tempCtx = tempCanvas.getContext("2d")!;
+        // Add 20% padding around the face for better coverage
+        const padX = bbox.width * 0.2;
+        const padY = bbox.height * 0.2;
+        const x = Math.max(0, bbox.originX - padX);
+        const y = Math.max(0, bbox.originY - padY);
+        const w = Math.min(canvas.width - x, bbox.width + padX * 2);
+        const h = Math.min(canvas.height - y, bbox.height + padY * 2);
 
-      // Draw face region at tiny size
-      tempCtx.drawImage(canvas, x, y, w, h, 0, 0, w / pixelSize, h / pixelSize);
+        // Pixelate the face region (scale down, then scale back up)
+        const pixelSize = 12;
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = w;
+        tempCanvas.height = h;
+        const tempCtx = tempCanvas.getContext("2d")!;
 
-      // Disable image smoothing for sharp pixels
-      tempCtx.imageSmoothingEnabled = false;
+        // Draw face region at tiny size
+        tempCtx.drawImage(canvas, x, y, w, h, 0, 0, w / pixelSize, h / pixelSize);
 
-      // Scale it back up → pixelated
-      tempCtx.drawImage(tempCanvas, 0, 0, w / pixelSize, h / pixelSize, 0, 0, w, h);
+        // Disable image smoothing for sharp pixels
+        tempCtx.imageSmoothingEnabled = false;
 
-      // Draw the pixelated face back onto the main canvas
-      ctx.drawImage(tempCanvas, 0, 0, w, h, x, y, w, h);
+        // Scale it back up → pixelated
+        tempCtx.drawImage(tempCanvas, 0, 0, w / pixelSize, h / pixelSize, 0, 0, w, h);
+
+        // Draw the pixelated face back onto the main canvas
+        ctx.drawImage(tempCanvas, 0, 0, w, h, x, y, w, h);
+      }
     }
-  }
 
-  // Export as base64 JPEG
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-  const blurredBase64 = dataUrl.split(",")[1]; // Remove "data:image/jpeg;base64,"
+    // Export as base64 JPEG
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    const blurredBase64 = dataUrl.split(",")[1]; // Remove "data:image/jpeg;base64,"
 
-  return {
-    blurredBase64,
-    facesDetected: detections.length,
+    return {
+      blurredBase64,
+      facesDetected: detections.length,
+    };
   };
+
+  const timeoutFallback = new Promise<{ blurredBase64: string; facesDetected: number }>((resolve) => {
+    setTimeout(() => {
+      console.warn("⚠️ Face blur timed out after 5s, skipping blur");
+      // Return original image without blur
+      const raw = imageSource.includes(",") ? imageSource.split(",")[1] : imageSource;
+      resolve({ blurredBase64: raw, facesDetected: -1 });
+    }, TIMEOUT_MS);
+  });
+
+  return Promise.race([blurTask(), timeoutFallback]);
 }
 
 /**

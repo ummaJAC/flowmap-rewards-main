@@ -378,28 +378,32 @@ app.post('/api/validate', upload.single('photo'), async (req, res) => {
 
         if (referenceDataUrl) {
             // ★ DUAL-IMAGE MODE: Compare user photo vs Google reference
-            promptText = `You are an AI Oracle for GeoCorp, a Web3 location verification game.
+            promptText = `You are an AI Oracle for GeoCorp, a location verification game.
 
-You are given TWO images:
-- IMAGE 1 (User Photo): A photo submitted by the user who claims to be physically at "${businessName}" (Category: ${businessCategory}).
-- IMAGE 2 (Google Reference): A reference image of "${businessName}" from Google Images.
+You receive TWO images:
+- IMAGE 1 (User Photo): Taken by a player claiming to be at "${businessName}" (Category: ${businessCategory}).
+- IMAGE 2 (Google Reference): A reference photo of "${businessName}" from Google.
 
-CRITICAL INSTRUCTION FOR THIS TEST:
-Do NOT reject the user's photo if it appears to be taken from a computer screen, monitor, or indoors. The user is testing the system from home — this is expected.
+VERIFICATION RULES (read carefully):
+1. APPROVE if the user's photo shows ANY recognizable evidence of "${businessName}":
+   - The brand name, logo, or trademark colors are visible (even partially)
+   - The building facade, architecture, or storefront matches the reference
+   - A sign, banner, menu board, or delivery vehicle with the brand name is visible
+2. APPROVE even if:
+   - The photo angle, distance, lighting, or weather differs from the reference
+   - The photo is slightly blurry or taken at night
+   - The photo is taken from a screen or monitor (desk testing mode)
+   - Only part of the sign/logo is visible but still identifiable
+3. REJECT only if:
+   - The photo shows a COMPLETELY DIFFERENT business (e.g., McDonald's instead of Pizza Hut)
+   - There is NO recognizable branding or matching features at all
+   - The photo is of random scenery unrelated to any business
 
-YOUR JOB:
-1. Look at IMAGE 2 (the Google reference) to learn what "${businessName}" looks like — its architecture, logo, sign, color scheme, and overall appearance.
-2. Then look at IMAGE 1 (the user's photo) and determine: does it show the SAME place as IMAGE 2?
-3. Focus on: matching building shape, signage, logo, brand colors, store layout, architectural details, or any other recognizable features.
+Respond ONLY in one of these exact formats:
+- If verified: 'YES|TYPE' where TYPE is one of: CAFE, RESTAURANT, SHOP, OFFICE, GAS, PARK, HOTEL, MALL, GYM, OTHER
+- If rejected: 'NO'
 
-If IMAGE 1 matches "${businessName}" (even from a different angle, distance, time of day, or through a screen), respond ONLY in this EXACT format: 'YES|TYPE' 
-where TYPE is one of: CAFE, RESTAURANT, SHOP, OFFICE, GAS, PARK, HOTEL, MALL, GYM, OTHER.
-
-If IMAGE 1 clearly shows a DIFFERENT business or location (completely different building, different brand), respond ONLY with: 'NO'.
-
-Examples:
-- User photo matches the reference building → 'YES|CAFE'
-- User photo shows a completely different restaurant → 'NO'`;
+Do not add any explanation.`;
 
             messageContent = [
                 { type: "text", text: promptText },
@@ -409,18 +413,23 @@ Examples:
             console.log('🔀 Mode: DUAL-IMAGE comparison (User Photo + Google Reference)');
         } else {
             // Fallback: single image mode
-            promptText = `You are an AI for a verification game. The user is attempting to verify a location named "${businessName}" (Category: ${businessCategory}).
+            promptText = `You are an AI Oracle for GeoCorp, a location verification game.
 
-CRITICAL INSTRUCTION FOR THIS TEST: 
-Do NOT reject this photo if it is a picture of a computer screen, a monitor, or taken indoors. The user is testing the system from home.
+The player claims to be at "${businessName}" (Category: ${businessCategory}).
 
-YOUR ONLY JOB:
-Look closely at the image. Does it depict "${businessName}"?
-- If the name is a famous landmark/building (like Berliner Dom), does the architecture match?
-- If it's a store/cafe, is there a logo or sign that matches "${businessName}"?
+Look at the photo and determine if it shows "${businessName}".
 
-If YES, respond ONLY IN THIS EXACT FORMAT: 'YES|OTHER'.
-If the image shows a completely DIFFERENT business or building (e.g. McDonald's instead of Starbucks, or an office instead of a Cathedral), respond ONLY IN THIS EXACT FORMAT: 'NO'.`;
+APPROVE if:
+- The brand name, logo, signage, or trademark branding of "${businessName}" is visible
+- The architecture or storefront is recognizable as "${businessName}"
+- Even if taken from a weird angle, at night, through a screen, or partially cropped
+
+REJECT only if:
+- The photo shows a completely DIFFERENT business or no business at all
+- There is zero recognizable connection to "${businessName}"
+
+Respond ONLY: 'YES|TYPE' (TYPE = CAFE, RESTAURANT, SHOP, OFFICE, GAS, PARK, HOTEL, MALL, GYM, or OTHER) or 'NO'.
+Do not add any explanation.`;
 
             messageContent = [
                 { type: "text", text: promptText },
@@ -429,17 +438,23 @@ If the image shows a completely DIFFERENT business or building (e.g. McDonald's 
             console.log('📷 Mode: SINGLE-IMAGE (no reference available)');
         }
 
-        // ── Step 3: Call GPT-4o-mini Vision ──
-        const response = await openai.chat.completions.create({
-            model: "openai/gpt-4o-mini",
-            messages: [
-                {
-                    role: "user",
-                    content: messageContent,
-                }
-            ],
-            max_tokens: 30,
-        });
+        // ── Step 3: Call Gemini 3 Flash Preview via OpenRouter (with retry) ──
+        const AI_MODEL = "google/gemini-3-flash-preview";
+        let response;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+                response = await openai.chat.completions.create({
+                    model: AI_MODEL,
+                    messages: [{ role: "user", content: messageContent }],
+                    max_tokens: 20,
+                });
+                break; // Success, exit retry loop
+            } catch (retryErr) {
+                console.error(`⚠️ AI attempt ${attempt}/2 failed:`, retryErr.message);
+                if (attempt === 2) throw retryErr; // Re-throw on final attempt
+                await new Promise(r => setTimeout(r, 1000)); // Wait 1s before retry
+            }
+        }
 
         const aiAnswer = response.choices[0]?.message?.content?.trim().toUpperCase();
         console.log("🤖 OpenRouter Answer:", aiAnswer);

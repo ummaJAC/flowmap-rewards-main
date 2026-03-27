@@ -384,26 +384,22 @@ You receive TWO images:
 - IMAGE 1 (User Photo): Taken by a player claiming to be at "${businessName}" (Category: ${businessCategory}).
 - IMAGE 2 (Google Reference): A reference photo of "${businessName}" from Google.
 
-VERIFICATION RULES (read carefully):
-1. APPROVE if the user's photo shows ANY recognizable evidence of "${businessName}":
-   - The brand name, logo, or trademark colors are visible (even partially)
-   - The building facade, architecture, or storefront matches the reference
-   - A sign, banner, menu board, or delivery vehicle with the brand name is visible
-2. APPROVE even if:
-   - The photo angle, distance, lighting, or weather differs from the reference
-   - The photo is slightly blurry or taken at night
-   - The photo is taken from a screen or monitor (desk testing mode)
-   - Only part of the sign/logo is visible but still identifiable
-3. REJECT only if:
-   - The photo shows a COMPLETELY DIFFERENT business (e.g., McDonald's instead of Pizza Hut)
-   - There is NO recognizable branding or matching features at all
-   - The photo is of random scenery unrelated to any business
+VERIFICATION RULES (IMPORTANT):
+1. LOOK FOR ARCHITECTURE & CONTEXT: First, verify if IMAGE 1 shows a real physical environment (building, entrance, windows, street, sidewalk).
+2. MATCHING STYLE: Compare IMAGE 1 architecture style (colors, materials, entrance layout, window patterns) with IMAGE 2.
+3. LOGO & BRANDING: Look for the logo, brand colors, or signage of "${businessName}". It's okay if the text is partially visible or in a different language, as long as the brand is identifiable.
+4. APPROVE if:
+   - There is clear brand evidence (logo/sign) AND the building style matches IMAGE 2.
+   - OR the branding name is not visible, but the building geometry, facade, and surroundings match IMAGE 2 perfectly.
+   - The photo is taken from a screen/monitor (Desk Testing Mode) as long as it shows a real place on that screen.
+5. REJECT if:
+   - It is a "Text-only" cheat (e.g., "${businessName}" written on a piece of paper, a random wall, or a flat blank screen).
+   - IMAGE 1 shows a completely different brand (e.g., McDonald's instead of ${businessName}).
+   - The photo is of random scenery with NO business context.
+   - It is a selfie or a photo of a person with no visible building context.
 
-Respond ONLY in one of these exact formats:
-- If verified: 'YES|TYPE' where TYPE is one of: CAFE, RESTAURANT, SHOP, OFFICE, GAS, PARK, HOTEL, MALL, GYM, OTHER
-- If rejected: 'NO'
-
-Do not add any explanation.`;
+Respond ONLY: 'YES|TYPE' (TYPE = CAFE, RESTAURANT, SHOP, OFFICE, GAS, PARK, HOTEL, MALL, GYM, OTHER) or 'NO'.
+Do not add any explanation. Keep it purely functional.`;
 
             messageContent = [
                 { type: "text", text: promptText },
@@ -420,16 +416,17 @@ The player claims to be at "${businessName}" (Category: ${businessCategory}).
 Look at the photo and determine if it shows "${businessName}".
 
 APPROVE if:
-- The brand name, logo, signage, or trademark branding of "${businessName}" is visible
-- The architecture or storefront is recognizable as "${businessName}"
-- Even if taken from a weird angle, at night, through a screen, or partially cropped
+- You see clear brand evidence (logo, signage, colors) of "${businessName}".
+- The photo shows a physical storefront, building entrance, or business interior.
+- Even if taken from a weird angle, through a screen, or at night.
 
-REJECT only if:
-- The photo shows a completely DIFFERENT business or no business at all
-- There is zero recognizable connection to "${businessName}"
+REJECT if:
+- It is a "Text-only" cheat (e.g., name written on a paper or flat blank surface).
+- The photo shows a completely DIFFERENT business.
+- There is NO physical business context (just random scenery or people).
 
 Respond ONLY: 'YES|TYPE' (TYPE = CAFE, RESTAURANT, SHOP, OFFICE, GAS, PARK, HOTEL, MALL, GYM, or OTHER) or 'NO'.
-Do not add any explanation.`;
+Do not add any explanation. Purely functional.`;
 
             messageContent = [
                 { type: "text", text: promptText },

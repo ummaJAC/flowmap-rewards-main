@@ -190,6 +190,7 @@ app.post('/api/capture', requireAuth, async (req, res) => {
     try {
         const { lat, lng, name, category, reward, txHash, ipfsCid } = req.body;
         const userId = req.user.id;
+        console.log(`\n📥 CAPTURE REQUEST: user=${userId}, business="${name}", category="${category}", reward=${reward}, txHash=${txHash || 'none'}`);
 
         // Verify user exists and get current balance
         const { data: user, error: userErr } = await supabaseAdmin
@@ -198,7 +199,12 @@ app.post('/api/capture', requireAuth, async (req, res) => {
             .eq('id', userId)
             .single();
 
-        if (userErr || !user) return res.status(404).json({ error: "User not found" });
+        if (userErr || !user) {
+            console.error(`❌ CAPTURE FAILED: User ${userId} not found`, userErr);
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        console.log(`   Current balance: ${user.geo_balance}`);
 
         // Insert business
         const { data: newBiz, error: bizErr } = await supabaseAdmin
@@ -216,7 +222,10 @@ app.post('/api/capture', requireAuth, async (req, res) => {
             .select()
             .single();
 
-        if (bizErr) throw bizErr;
+        if (bizErr) {
+            console.error(`❌ CAPTURE FAILED: Business insert error for "${name}"`, bizErr);
+            throw bizErr;
+        }
 
         const newBalance = user.geo_balance + reward;
 
@@ -226,7 +235,10 @@ app.post('/api/capture', requireAuth, async (req, res) => {
             .update({ geo_balance: newBalance })
             .eq('id', userId);
 
-        if (updateErr) throw updateErr;
+        if (updateErr) {
+            console.error(`❌ CAPTURE FAILED: Balance update error`, updateErr);
+            throw updateErr;
+        }
 
         // Log transaction
         await supabaseAdmin.from('transactions').insert({
@@ -237,9 +249,10 @@ app.post('/api/capture', requireAuth, async (req, res) => {
             business_name: name
         });
 
+        console.log(`✅ CAPTURE SUCCESS: "${name}" → balance ${user.geo_balance} → ${newBalance}`);
         res.json({ success: true, newBalance, business: newBiz });
     } catch (err) {
-        console.error("Capture API Error:", err);
+        console.error("❌ CAPTURE EXCEPTION:", err);
         res.status(500).json({ error: err.message });
     }
 });

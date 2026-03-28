@@ -104,10 +104,14 @@ app.use(express.json());
 app.use('/api/auth', authRouter);
 
 // Database Profile Info
+// Building type reverse map (smart contract enum → category name)
+const BUILDING_TYPE_NAMES = ['Café', 'Restaurant', 'Shop', 'Office', 'Gas Station', 'Park', 'Hotel', 'Mall', 'Gym', 'Other'];
+
 app.get('/api/me', requireAuth, async (req, res) => {
     try {
         const userId = req.user.id;
         
+        // Always get user profile from Supabase (auth, email, username, wallet)
         const { data: user, error: userErr } = await supabaseAdmin
             .from('profiles')
             .select('id, email, username, energy, evm_address, evm_private_key, geo_balance')
@@ -116,12 +120,81 @@ app.get('/api/me', requireAuth, async (req, res) => {
 
         if (userErr || !user) return res.status(404).json({ error: 'User not found' });
 
-        const { data: businesses, error: bizErr } = await supabaseAdmin
-            .from('businesses')
-            .select('*')
-            .eq('user_id', userId);
+        // Try to read game data from Flow blockchain
+        let businesses = [];
+        let onChainBalance = user.geo_balance; // fallback to Supabase
+        let propertiesOwned = 0;
+        let totalDailyYield = 0;
 
-        const totalYield = (businesses || []).reduce((sum, b) => sum + (b.yield_rate || 0), 0);
+        if (contract && user.evm_address) {
+            try {
+                // Get on-chain stats
+                const [propertyCount, geoTokens] = await contract.getPlayerStats(user.evm_address);
+                onChainBalance = Number(geoTokens);
+                propertiesOwned = Number(propertyCount);
+
+                // Get on-chain properties
+                const tokenIds = await contract.getPlayerProperties(user.evm_address);
+                for (const tokenId of tokenIds) {
+                    const prop = await contract.getProperty(tokenId);
+                    const buildingType = Number(prop.buildingType);
+                    const dailyYield = Number(prop.dailyYield);
+                    totalDailyYield += dailyYield;
+                    businesses.push({
+                        name: `Property #${Number(tokenId)}`,
+                        category: BUILDING_TYPE_NAMES[buildingType] || 'Other',
+                        lat: Number(prop.lat) / 1e6,
+                        lng: Number(prop.lng) / 1e6,
+                        yield_rate: dailyYield,
+                        created_at: new Date(Number(prop.capturedAt) * 1000).toISOString(),
+                        image_cid: prop.ipfsCid,
+                        tokenId: Number(tokenId),
+                        source: 'blockchain'
+                    });
+                }
+                console.log(`⛓️  /api/me: Read ${businesses.length} properties from blockchain for ${user.evm_address} (balance: ${onChainBalance})`);
+
+                // Enrich blockchain properties with business names from Supabase
+                if (businesses.length > 0) {
+                    const { data: supaBiz } = await supabaseAdmin
+                        .from('businesses')
+                        .select('name, lat, lng, category')
+                        .eq('user_id', userId);
+                    if (supaBiz && supaBiz.length > 0) {
+                        for (const biz of businesses) {
+                            // Match by coordinates (rounded to 4 decimals)
+                            const match = supaBiz.find(s => 
+                                Math.abs(parseFloat(s.lat) - biz.lat) < 0.001 && 
+                                Math.abs(parseFloat(s.lng) - biz.lng) < 0.001
+                            );
+                            if (match) {
+                                biz.name = match.name;
+                                if (match.category) biz.category = match.category;
+                            }
+                        }
+                    }
+                }
+            } catch (chainErr) {
+                console.warn(`⚠️  Blockchain read failed for /api/me, falling back to Supabase:`, chainErr.message);
+                // Fallback: read from Supabase
+                const { data: supaBiz } = await supabaseAdmin
+                    .from('businesses')
+                    .select('*')
+                    .eq('user_id', userId);
+                businesses = supaBiz || [];
+                totalDailyYield = businesses.reduce((sum, b) => sum + (b.yield_rate || 0), 0);
+                propertiesOwned = businesses.length;
+            }
+        } else {
+            // No contract or no EVM address — use Supabase
+            const { data: supaBiz } = await supabaseAdmin
+                .from('businesses')
+                .select('*')
+                .eq('user_id', userId);
+            businesses = supaBiz || [];
+            totalDailyYield = businesses.reduce((sum, b) => sum + (b.yield_rate || 0), 0);
+            propertiesOwned = businesses.length;
+        }
 
         res.json({
             user: {
@@ -130,13 +203,13 @@ app.get('/api/me', requireAuth, async (req, res) => {
                 username: user.username,
                 energy: user.energy,
                 evm_address: user.evm_address,
-                evm_private_key: user.evm_private_key, // Passed purely for hackathon MVP view
-                balance: user.geo_balance
+                evm_private_key: user.evm_private_key,
+                balance: onChainBalance
             },
-            businesses: businesses || [],
+            businesses,
             metrics: {
-                dailyYield: totalYield,
-                propertiesOwned: businesses?.length || 0
+                dailyYield: totalDailyYield,
+                propertiesOwned
             }
         });
     } catch (error) {
@@ -144,40 +217,46 @@ app.get('/api/me', requireAuth, async (req, res) => {
     }
 });
 
-// Database Leaderboard
+// Blockchain-powered Leaderboard
 app.get('/api/leaderboard', async (req, res) => {
     try {
+        // Get user list from Supabase (for usernames + addresses)
         const { data: profiles, error: profilesErr } = await supabaseAdmin
             .from('profiles')
             .select('id, username, evm_address, geo_balance, energy, created_at')
-            .order('geo_balance', { ascending: false })
             .limit(100);
 
         if (profilesErr) throw profilesErr;
 
-        // Fetch property counts per user in one query
-        const userIds = profiles.map(u => u.id);
-        const { data: bizCounts, error: bizErr } = await supabaseAdmin
-            .from('businesses')
-            .select('user_id')
-            .in('user_id', userIds);
+        const users = [];
 
-        // Build a map: userId -> number of properties
-        const propertyMap = {};
-        if (!bizErr && bizCounts) {
-            for (const b of bizCounts) {
-                propertyMap[b.user_id] = (propertyMap[b.user_id] || 0) + 1;
+        for (const u of profiles) {
+            let geoBalance = u.geo_balance || 0;
+            let propertiesOwned = 0;
+
+            // Try to read from blockchain
+            if (contract && u.evm_address) {
+                try {
+                    const [propertyCount, geoTokens] = await contract.getPlayerStats(u.evm_address);
+                    geoBalance = Number(geoTokens);
+                    propertiesOwned = Number(propertyCount);
+                } catch {
+                    // Fallback to Supabase balance
+                }
             }
+
+            users.push({
+                id: u.id,
+                username: u.username,
+                evm_address: u.evm_address,
+                geo_balance: geoBalance,
+                daily_yield: Math.floor(geoBalance * 0.1),
+                properties_owned: propertiesOwned
+            });
         }
 
-        const users = profiles.map(u => ({
-            id: u.id,
-            username: u.username,
-            evm_address: u.evm_address,
-            geo_balance: u.geo_balance || 0,
-            daily_yield: Math.floor((u.geo_balance || 0) * 0.1),
-            properties_owned: propertyMap[u.id] || 0
-        }));
+        // Sort by on-chain balance descending
+        users.sort((a, b) => b.geo_balance - a.geo_balance);
 
         res.json(users);
     } catch (error) {

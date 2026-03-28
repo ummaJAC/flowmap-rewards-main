@@ -176,7 +176,8 @@ const useGameStore = create<GameState>()(
                   'Museum': '🏛', 'Embassy': '🏛', 'Stadium': '🏟',
                   'Airport': '✈️', 'Auto': '🚗', 'Car Rental': '🚗',
                   'Gas Station': '⛽', 'Services': '🏢', 'Business': '📍',
-                  'Seafood': '🐟',
+                  'Seafood': '🐟', 'Mall': '🏬', 'Park': '🌳', 'Other': '📍',
+                  'Office': '🏢', 'office': '🏢',
                 };
                 const icon = categoryIconMap[b.category] || '📍';
                 return {

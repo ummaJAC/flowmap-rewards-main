@@ -107,8 +107,9 @@ interface GameState {
   totalEarned: number;
   totalCaptures: number;
 
-  // --- Sync flag ---
+  // --- Sync flags ---
   _isSyncing: boolean;
+  _capturePending: number;
 
   // --- Map Settings ---
   lastKnownLocation: { lat: number; lng: number } | null;
@@ -130,6 +131,7 @@ const useGameStore = create<GameState>()(
       lastDailyClaimTimestamp: 0,
       transactions: [],
       _isSyncing: false,
+      _capturePending: 0,
       lastKnownLocation: null,
 
       login: (token, user) => {
@@ -144,8 +146,8 @@ const useGameStore = create<GameState>()(
       setLastKnownLocation: (lat, lng) => set({ lastKnownLocation: { lat, lng } }),
 
       fetchProfile: async () => {
-        const { token, _isSyncing } = get();
-        if (!token || _isSyncing) return;
+        const { token, _isSyncing, _capturePending } = get();
+        if (!token || _isSyncing || _capturePending > 0) return;
         set({ _isSyncing: true });
         try {
           const res = await fetch(`/api/me`, {
@@ -212,6 +214,9 @@ const useGameStore = create<GameState>()(
         const state = get();
         if (state.ownedLocations.some(l => l.id === loc.id)) return;
 
+        // Mark capture as pending (blocks fetchProfile from overwriting)
+        set(s => ({ _capturePending: s._capturePending + 1 }));
+
         // Optimistic UI update
         set({
           ownedLocations: [...state.ownedLocations, loc],
@@ -246,11 +251,18 @@ const useGameStore = create<GameState>()(
               set({ balance: data.newBalance });
               // Refresh transactions
               get().fetchTransactions();
+            } else {
+              console.error("Capture API returned error:", res.status, await res.text());
             }
           } catch (err) {
             console.error("Failed to persist capture:", err);
           }
         }
+
+        // Unmark capture pending, then re-sync from backend
+        set(s => ({ _capturePending: s._capturePending - 1 }));
+        // Fetch fresh profile data now that capture is persisted
+        setTimeout(() => get().fetchProfile(), 500);
       },
 
       isOwned: (locationId) => {

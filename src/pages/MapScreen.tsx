@@ -716,23 +716,35 @@ const MapScreen = () => {
 
               {/* Conditional Content based on Ownership */}
               {isOwned(selectedBusiness.id) ? (
-                <>
-                  <div className="bg-green-50 rounded-2xl p-4 mb-5 border border-green-100 flex items-start gap-3">
-                    <div className="text-2xl mt-1">👑</div>
-                    <div>
-                      <h4 className="font-black text-green-800 text-sm uppercase mb-1">Property Owned</h4>
-                      <p className="text-xs font-bold text-green-700/80 leading-relaxed">
-                        You have already captured this location. It is currently generating passive {Math.round(selectedBusiness.reward * 0.1)} GEO daily for your empire.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    disabled
-                    className="w-full bg-slate-200 text-slate-400 py-4 rounded-2xl font-black text-lg uppercase tracking-wider cursor-not-allowed"
-                  >
-                    ALREADY OWNED
-                  </button>
-                </>
+                (() => {
+                  const idLower = selectedBusiness.id.toLowerCase();
+                  const owned = ownedLocations.find(l => 
+                    l.id === selectedBusiness.id || 
+                    l.name.toLowerCase() === idLower || 
+                    idLower.startsWith(l.name.toLowerCase())
+                  );
+                  const displayYield = owned ? Math.floor(owned.dailyYield) : Math.round(selectedBusiness.reward * 0.1);
+                  
+                  return (
+                    <>
+                      <div className="bg-green-50 rounded-2xl p-4 mb-5 border border-green-100 flex items-start gap-3">
+                        <div className="text-2xl mt-1">👑</div>
+                        <div>
+                          <h4 className="font-black text-green-800 text-sm uppercase mb-1">Property Owned</h4>
+                          <p className="text-xs font-bold text-green-700/80 leading-relaxed">
+                            You have already captured this location. It is currently generating passive {displayYield} GEO daily for your empire.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        disabled
+                        className="w-full bg-slate-200 text-slate-400 py-4 rounded-2xl font-black text-lg uppercase tracking-wider cursor-not-allowed"
+                      >
+                        ALREADY OWNED
+                      </button>
+                    </>
+                  );
+                })()
               ) : (
                 <>
                   <p className="text-sm text-slate-500 font-bold mb-4">

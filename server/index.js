@@ -215,9 +215,7 @@ app.post('/api/capture', requireAuth, async (req, res) => {
                 lng,
                 name,
                 category,
-                yield_rate: Math.ceil(reward * 0.1),
-                tx_hash: txHash || null,
-                image_cid: ipfsCid || null
+                yield_rate: Math.ceil(reward * 0.1)
             })
             .select()
             .single();

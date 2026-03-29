@@ -107,6 +107,30 @@ app.use('/api/auth', authRouter);
 // Building type reverse map (smart contract enum → category name)
 const BUILDING_TYPE_NAMES = ['Café', 'Restaurant', 'Shop', 'Office', 'Gas Station', 'Park', 'Hotel', 'Mall', 'Gym', 'Other'];
 
+// Helper: calculate balance + yield from Supabase businesses
+async function _calcFromSupabase(userId, baseBalance) {
+    const { data: supaBiz } = await supabaseAdmin
+        .from('businesses')
+        .select('*')
+        .eq('user_id', userId);
+
+    const businesses = supaBiz || [];
+    const totalDailyYield = businesses.reduce((sum, b) => sum + (b.yield_rate || 0), 0);
+    const propertiesOwned = businesses.length;
+
+    // Calculate real-time pending yield from each business
+    const nowMs = Date.now();
+    let pendingYield = 0;
+    for (const b of businesses) {
+        const elapsedSec = (nowMs - new Date(b.created_at).getTime()) / 1000;
+        pendingYield += ((b.yield_rate || 0) * Math.max(0, elapsedSec)) / 86400;
+    }
+
+    const onChainBalance = (baseBalance || 0) + pendingYield;
+
+    return { businesses, totalDailyYield, propertiesOwned, onChainBalance };
+}
+
 app.get('/api/me', requireAuth, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -185,24 +209,24 @@ app.get('/api/me', requireAuth, async (req, res) => {
                 }
             } catch (chainErr) {
                 console.warn(`⚠️  Blockchain read failed for /api/me, falling back to Supabase:`, chainErr.message);
-                // Fallback: read from Supabase
-                const { data: supaBiz } = await supabaseAdmin
-                    .from('businesses')
-                    .select('*')
-                    .eq('user_id', userId);
-                businesses = supaBiz || [];
-                totalDailyYield = businesses.reduce((sum, b) => sum + (b.yield_rate || 0), 0);
-                propertiesOwned = businesses.length;
+                // Fallback: read from Supabase with dynamic yield
+                ({ businesses, totalDailyYield, propertiesOwned, onChainBalance } = await _calcFromSupabase(userId, user.geo_balance));
+            }
+
+            // If blockchain returned 0 properties but Supabase has data, prefer Supabase
+            if (propertiesOwned === 0) {
+                const fallback = await _calcFromSupabase(userId, user.geo_balance);
+                if (fallback.propertiesOwned > 0) {
+                    businesses = fallback.businesses;
+                    totalDailyYield = fallback.totalDailyYield;
+                    propertiesOwned = fallback.propertiesOwned;
+                    onChainBalance = fallback.onChainBalance;
+                    console.log(`🔄 /api/me: Blockchain returned 0 props, using Supabase (${propertiesOwned} props, balance: ${onChainBalance})`);
+                }
             }
         } else {
-            // No contract or no EVM address — use Supabase
-            const { data: supaBiz } = await supabaseAdmin
-                .from('businesses')
-                .select('*')
-                .eq('user_id', userId);
-            businesses = supaBiz || [];
-            totalDailyYield = businesses.reduce((sum, b) => sum + (b.yield_rate || 0), 0);
-            propertiesOwned = businesses.length;
+            // No contract or no EVM address — use Supabase with dynamic yield
+            ({ businesses, totalDailyYield, propertiesOwned, onChainBalance } = await _calcFromSupabase(userId, user.geo_balance));
         }
 
         res.json({
@@ -226,10 +250,10 @@ app.get('/api/me', requireAuth, async (req, res) => {
     }
 });
 
-// Blockchain-powered Leaderboard
+// Leaderboard with real-time yield calculation
 app.get('/api/leaderboard', async (req, res) => {
     try {
-        // Get user list from Supabase (for usernames + addresses)
+        // Get all users
         const { data: profiles, error: profilesErr } = await supabaseAdmin
             .from('profiles')
             .select('id, username, evm_address, geo_balance, energy, created_at')
@@ -237,37 +261,38 @@ app.get('/api/leaderboard', async (req, res) => {
 
         if (profilesErr) throw profilesErr;
 
-        const users = [];
+        // Get ALL businesses in one query (much faster than per-user)
+        const { data: allBiz } = await supabaseAdmin
+            .from('businesses')
+            .select('user_id, yield_rate, created_at');
 
-        for (const u of profiles) {
-            let geoBalance = u.geo_balance || 0;
-            let propertiesOwned = 0;
+        const bizByUser = {};
+        const nowMs = Date.now();
+        for (const b of (allBiz || [])) {
+            if (!bizByUser[b.user_id]) bizByUser[b.user_id] = { count: 0, totalYieldRate: 0, pendingYield: 0 };
+            const entry = bizByUser[b.user_id];
+            const yieldRate = b.yield_rate || 0;
+            entry.count++;
+            entry.totalYieldRate += yieldRate;
+            // Pending yield = yieldRate * seconds_since_capture / 86400
+            const elapsedSec = (nowMs - new Date(b.created_at).getTime()) / 1000;
+            entry.pendingYield += (yieldRate * Math.max(0, elapsedSec)) / 86400;
+        }
 
-            // Try to read from blockchain
-            if (contract && u.evm_address) {
-                try {
-                    const [propertyCount, geoTokens] = await contract.getPlayerStats(u.evm_address);
-                    const pendingYield = await contract.getPendingYield(u.evm_address);
-                    geoBalance = Number(geoTokens) + Number(pendingYield);
-                    propertiesOwned = Number(propertyCount);
-                } catch {
-                    // Fallback to Supabase balance
-                }
-            }
-
-            users.push({
+        const users = profiles.map(u => {
+            const biz = bizByUser[u.id] || { count: 0, totalYieldRate: 0, pendingYield: 0 };
+            const totalBalance = (u.geo_balance || 0) + biz.pendingYield;
+            return {
                 id: u.id,
                 username: u.username,
                 evm_address: u.evm_address,
-                geo_balance: Number(geoBalance.toFixed(1)),
-                daily_yield: propertiesOwned * 15,
-                properties_owned: propertiesOwned
-            });
-        }
+                geo_balance: Number(totalBalance.toFixed(2)),
+                daily_yield: biz.totalYieldRate,
+                properties_owned: biz.count
+            };
+        });
 
-        // Sort by on-chain balance descending
         users.sort((a, b) => b.geo_balance - a.geo_balance);
-
         res.json(users);
     } catch (error) {
         res.status(500).json({ error: error.message });

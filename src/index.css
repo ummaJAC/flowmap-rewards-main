@@ -148,7 +148,7 @@
   }
 
   /* ===== Mapbox UI overrides ===== */
-  .mapboxgl-ctrl-bottom-right {
-    margin-bottom: 200px !important;
+  .mapboxgl-ctrl-top-right {
+    transform: translateY(120px) !important;
   }
 }

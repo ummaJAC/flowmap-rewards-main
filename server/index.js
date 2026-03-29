@@ -130,9 +130,9 @@ app.get('/api/me', requireAuth, async (req, res) => {
             try {
                 // Get on-chain stats
                 const [propertyCount, geoTokens] = await contract.getPlayerStats(user.evm_address);
-                const pendingYield = await contract.getPendingYield(user.evm_address);
-                onChainBalance = Number(geoTokens) + Number(pendingYield);
-                propertiesOwned = Number(propertyCount);
+                // Calculate precise pending yield in JS to preserve fractions
+                let jsPendingYield = 0;
+                const nowUnix = Math.floor(Date.now() / 1000);
 
                 // Get on-chain properties
                 const tokenIds = await contract.getPlayerProperties(user.evm_address);
@@ -140,6 +140,11 @@ app.get('/api/me', requireAuth, async (req, res) => {
                     const prop = await contract.getProperty(tokenId);
                     const buildingType = Number(prop.buildingType);
                     const dailyYield = Number(prop.dailyYield);
+                    
+                    // Accumulate precise yield
+                    const elapsed = nowUnix - Number(prop.lastClaimed);
+                    jsPendingYield += (dailyYield * elapsed) / 86400;
+
                     totalDailyYield += dailyYield;
                     businesses.push({
                         name: `Property #${Number(tokenId)}`,
@@ -153,6 +158,9 @@ app.get('/api/me', requireAuth, async (req, res) => {
                         source: 'blockchain'
                     });
                 }
+                onChainBalance = Number(geoTokens) + jsPendingYield;
+                propertiesOwned = Number(propertyCount);
+
                 console.log(`⛓️  /api/me: Read ${businesses.length} properties from blockchain for ${user.evm_address} (balance: ${onChainBalance})`);
 
                 // Enrich blockchain properties with business names from Supabase

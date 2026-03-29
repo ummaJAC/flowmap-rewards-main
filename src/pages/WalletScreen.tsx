@@ -114,7 +114,7 @@ const WalletScreen = () => {
               <i className="ph-fill ph-sparkle text-sm animate-pulse" style={{ color: "#FACC15" }} />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-black text-slate-800">{Math.floor(balance).toLocaleString()}</span>
+              <span className="text-4xl font-black text-slate-800">{balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               <span className="font-black text-xl" style={{ color: "#22C55E" }}>GEO</span>
             </div>
           </div>

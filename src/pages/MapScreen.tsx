@@ -655,7 +655,7 @@ const MapScreen = () => {
           onClick={() => navigate("/wallet")}
         >
           <i className="ph-fill ph-coins text-lg" style={{ color: "#FACC15" }} />
-          <span className="font-black text-slate-800 text-sm">{balance.toLocaleString()} <span className="text-slate-400 font-bold ml-0.5">GEO</span></span>
+          <span className="font-black text-slate-800 text-sm">{Math.floor(balance).toLocaleString()} <span className="text-slate-400 font-bold ml-0.5">GEO</span></span>
         </div>
       </div>
 

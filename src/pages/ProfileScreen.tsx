@@ -108,7 +108,7 @@ const ProfileScreen = () => {
             <div className="flex items-center gap-2 mb-4">
               <i className="ph-fill ph-sparkle text-yellow-400 text-2xl" />
               <span className="text-4xl font-black">
-                {balance.toLocaleString()} <span className="text-lg opacity-70">GEO</span>
+                {Math.floor(balance).toLocaleString()} <span className="text-lg opacity-70">GEO</span>
               </span>
             </div>
             <div className="flex gap-4">

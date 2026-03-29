@@ -38,7 +38,7 @@ const StoreScreen = () => {
           <h1 className="text-xl font-black text-slate-800 tracking-tight uppercase">Geo Store</h1>
           <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-full shadow-sm border border-slate-100 cursor-pointer" onClick={() => navigate("/wallet")}>
             <i className="ph-fill ph-coins text-lg" style={{ color: "#FACC15" }} />
-            <span className="font-black text-slate-800 text-sm">{balance.toLocaleString()} <span className="text-slate-400 font-bold ml-0.5">GEO</span></span>
+            <span className="font-black text-slate-800 text-sm">{Math.floor(balance).toLocaleString()} <span className="text-slate-400 font-bold ml-0.5">GEO</span></span>
           </div>
         </div>
 

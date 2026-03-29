@@ -537,7 +537,7 @@ const MapScreen = () => {
       attributionControl: true,
     });
 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "bottom-right");
 
     map.on("load", async () => {
       // Apply cartoon colors

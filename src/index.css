@@ -148,7 +148,7 @@
   }
 
   /* ===== Mapbox UI overrides ===== */
-  .mapboxgl-ctrl-top-right {
-    margin-top: 140px !important;
+  .mapboxgl-ctrl-bottom-right {
+    margin-bottom: 200px !important;
   }
 }

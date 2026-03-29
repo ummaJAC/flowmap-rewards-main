@@ -146,4 +146,9 @@
   .ph, [class^="ph-"], [class*=" ph-"] {
     display: inline-block;
   }
+
+  /* ===== Mapbox UI overrides ===== */
+  .mapboxgl-ctrl-top-right {
+    top: 70px !important;
+  }
 }

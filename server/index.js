@@ -130,7 +130,8 @@ app.get('/api/me', requireAuth, async (req, res) => {
             try {
                 // Get on-chain stats
                 const [propertyCount, geoTokens] = await contract.getPlayerStats(user.evm_address);
-                onChainBalance = Number(geoTokens);
+                const pendingYield = await contract.getPendingYield(user.evm_address);
+                onChainBalance = Number(geoTokens) + Number(pendingYield);
                 propertiesOwned = Number(propertyCount);
 
                 // Get on-chain properties
@@ -238,7 +239,8 @@ app.get('/api/leaderboard', async (req, res) => {
             if (contract && u.evm_address) {
                 try {
                     const [propertyCount, geoTokens] = await contract.getPlayerStats(u.evm_address);
-                    geoBalance = Number(geoTokens);
+                    const pendingYield = await contract.getPendingYield(u.evm_address);
+                    geoBalance = Number(geoTokens) + Number(pendingYield);
                     propertiesOwned = Number(propertyCount);
                 } catch {
                     // Fallback to Supabase balance
@@ -249,8 +251,8 @@ app.get('/api/leaderboard', async (req, res) => {
                 id: u.id,
                 username: u.username,
                 evm_address: u.evm_address,
-                geo_balance: geoBalance,
-                daily_yield: Math.floor(geoBalance * 0.1),
+                geo_balance: Number(geoBalance.toFixed(1)),
+                daily_yield: propertiesOwned * 15,
                 properties_owned: propertiesOwned
             });
         }

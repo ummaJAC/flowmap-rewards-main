@@ -146,9 +146,9 @@
   .ph, [class^="ph-"], [class*=" ph-"] {
     display: inline-block;
   }
+}
 
-  /* ===== Mapbox UI overrides ===== */
-  .mapboxgl-ctrl-top-right {
-    transform: translateY(120px) !important;
-  }
+/* ===== Mapbox UI Global Overrides (Prevents Purge) ===== */
+.mapboxgl-ctrl-top-right {
+  top: 140px !important;
 }

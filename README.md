@@ -22,14 +22,6 @@ Players physically explore their cities, capture real-world businesses (cafes, r
 *   **Progressive Web App (PWA):** Installs directly to the user's home screen without navigating the restrictive app store policies regarding crypto/NFTs.
 *   **Flow EVM Integration:** Fast, low-cost verifiable ownership of real-world assets (RWA) mapped as NFTs on the Flow Testnet.
 
-## 🎯 Hackathon Tracks (PL_Genesis)
-
-GeoCorp was built specifically to address the following challenges:
-1. **Flow: The Future of Finance (Consumer Crypto):** Walletless Onboarding (OTP) & Sponsored Gas UX to bring Web3 to the real world effortlessly.
-2. **Crypto (DePIN):** Gamified Mapbox map targeting physical commercial businesses to earn passive $GEO yield.
-3. **AI & Robotics:** Google Gemini 3 Flash acts as an Economic Oracle, validating photo proofs in real-time and creating a cryptographic audit trail for the tokens minted.
-4. **Infrastructure & Digital Rights (Protocol Labs):** All captured photo proofs are pinned permanently to IPFS via Pinata to ensure verifiable Data Ownership and prevent censorship.
-
 ## 🏗️ Architecture (Web2.5 approach)
 
 To deliver a 60 FPS mobile experience without blockchain latency, GeoCorp uses a **Web2.5 Hybrid Architecture**:
